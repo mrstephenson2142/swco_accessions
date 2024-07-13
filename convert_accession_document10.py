@@ -56,6 +56,16 @@ def parse_city_state_zip(address):
     # Ensure there's a space after each comma
     address = re.sub(r',(\S)', r', \1', address)
     
+    # Add comma before state if not present
+    for state_name in sorted(STATE_MAP.keys(), key=len, reverse=True):
+        pattern = r'(\s)(' + re.escape(state_name) + r')\s'
+        if re.search(pattern, address, re.IGNORECASE):
+            address = re.sub(pattern, r',\1\2 ', address, flags=re.IGNORECASE)
+            break
+    
+    # Add comma before zip code if not present
+    address = re.sub(r'(\s)(\d{5}(-\d{4})?)\b', r',\1\2', address)
+    
     # Split the address into parts
     parts = [p.strip() for p in address.split(',')]
     

@@ -4,7 +4,6 @@ import re
 
 FIELD_NAMES = [
     "Number", "DonationTypeID", "Donor", "Courtesy of", "Street", "City, State, Zip",
-    "City", "State", "Zip", "Address_Other",
     "Donation/Lending Date", "Main Entry", "Quantity", "Restrictions",
     "Priority", "Assigned to Record Group", "Assigned for Processing?",
     "Date assigned", "Processing Completed?", "Date completed", "Processor", "Lender",
@@ -56,6 +55,16 @@ def parse_city_state_zip(address):
     # Ensure there's a space after each comma
     address = re.sub(r',(\S)', r', \1', address)
     
+    # Add comma before state if not present
+    for state_name in sorted(STATE_MAP.keys(), key=len, reverse=True):
+        pattern = r'(\s)(' + re.escape(state_name) + r')\s'
+        if re.search(pattern, address, re.IGNORECASE):
+            address = re.sub(pattern, r',\1\2 ', address, flags=re.IGNORECASE)
+            break
+    
+    # Add comma before zip code if not present
+    address = re.sub(r'(\s)(\d{5}(-\d{4})?)\b', r',\1\2', address)
+    
     # Split the address into parts
     parts = [p.strip() for p in address.split(',')]
     
@@ -85,6 +94,8 @@ def parse_city_state_zip(address):
 def parse_records(doc):
     records = []
     current_record = None
+    current_field = None
+    address_info = {}
     
     for i, paragraph in enumerate(doc.paragraphs):
         text = paragraph.text.strip()
@@ -104,9 +115,10 @@ def parse_records(doc):
                     if not re.match(r'Number\s+\d{2}-\d+-[a-zA-Z]', text):
                         break
                     if current_record:
-                        records.append(current_record)
+                        records.append((current_record, address_info))
                     current_record = {}
-
+                    address_info = {}
+                
                 value = text[len(field):].strip()
                 
                 if field == "Number":
@@ -123,30 +135,33 @@ def parse_records(doc):
                 elif field == "City, State, Zip":
                     current_record[field] = value  # Keep original value
                     city, state, zip_code, address_other = parse_city_state_zip(value)
-                    current_record["City"] = proper_case(city)
-                    current_record["State"] = state
-                    current_record["Zip"] = zip_code
-                    current_record["Address_Other"] = address_other
-                    debug_print(f"Found field: City = {current_record['City']}")
-                    debug_print(f"Found field: State = {current_record['State']}")
-                    debug_print(f"Found field: Zip = {current_record['Zip']}")
-                    debug_print(f"Found field: Address_Other = {current_record['Address_Other']}")
+                    address_info["City"] = proper_case(city)
+                    address_info["State"] = state
+                    address_info["Zip"] = zip_code
+                    address_info["Address_Other"] = address_other
+                    debug_print(f"Found field: City = {address_info['City']}")
+                    debug_print(f"Found field: State = {address_info['State']}")
+                    debug_print(f"Found field: Zip = {address_info['Zip']}")
+                    debug_print(f"Found field: Address_Other = {address_info['Address_Other']}")
                 elif field in PROPER_CASE_FIELDS:
                     current_record[field] = proper_case(value)
                 else:
                     current_record[field] = value
                 debug_print(f"Found field: {field} = {value}")
                 
+                current_field = field
                 field_match = True
                 break
         
-        if not field_match and current_record:
-            last_field = list(current_record.keys())[-1]
-            current_record[last_field] += " " + text
-            debug_print(f"Appended to {last_field}: {text}")
+        if not field_match and current_record and current_field:
+            if current_field in current_record:
+                current_record[current_field] += " " + text
+            else:
+                current_record[current_field] = text
+            debug_print(f"Appended to {current_field}: {text}")
     
     if current_record:
-        records.append(current_record)
+        records.append((current_record, address_info))
     
     debug_print(f"Total records found: {len(records)}")
     return records
@@ -159,10 +174,11 @@ def main():
     
     if records:
         with open('output.csv', 'w', newline='', encoding='utf-8') as csvfile:
-            writer = csv.DictWriter(csvfile, fieldnames=FIELD_NAMES, quoting=csv.QUOTE_ALL)
+            writer = csv.DictWriter(csvfile, fieldnames=FIELD_NAMES + ["City", "State", "Zip", "Address_Other"], quoting=csv.QUOTE_ALL)
             writer.writeheader()
-            for record in records:
-                writer.writerow(record)
+            for record, address_info in records:
+                combined_record = {**record, **address_info}
+                writer.writerow(combined_record)
         
         debug_print(f"Processed {len(records)} records and saved to output.csv")
     else:
